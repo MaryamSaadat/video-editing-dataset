@@ -1,0 +1,20 @@
+# Ignore everything
+*
+
+# Allow .py files
+!*.py
+
+# But still ignore inside virtual envs, backups, etc.
+.venv/
+__pycache__/
+*.csv
+*.json
+*.jsonl
+*.log
+*.env
+backups/
+filtered/
+raw_csv/
+video_data/
+anomalies/
+kept_*/
