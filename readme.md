@@ -163,7 +163,7 @@ This script lets you **review** rows flagged as anomalous and **edit** their met
 To update the original CSV in place:
 
 ```bash
-python review_anomalies.py \
+python removehallucinations.py \
   --original filtered/drama_filtered.csv \
   --anomalies anomalies/drama_anomalies.csv \
   --videos_dir kept_drama_videos \

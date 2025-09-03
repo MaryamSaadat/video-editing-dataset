@@ -24,6 +24,19 @@ KEEP_DIR = Path(f"kept_{GENRE}_videos")
 # Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+
+# --------------------------
+# Typed response schema
+# --------------------------
+class Segment(BaseModel):
+    timestamp: int
+    visualDescription: str
+    transcript: str
+
+class VideoAnalysis(BaseModel):
+    segments: List[Segment]
+
+
 # --------------------------
 # Gemini analysis
 # --------------------------
