@@ -13,9 +13,10 @@ load_dotenv()
 # --------------------------
 
 MAX_DURATION = 120
+MINIMUM_VIEWS = 100000 #The video should have atleast 100,000 to consider viral
 LANGUAGE = "en"
 
-GENRE = os.environ.get("VIDEO_CATEGORY", "testing").strip()
+GENRE = os.environ.get("VIDEO_CATEGORY").strip()
 VIDEO_DATA_DIR = "video_data"
 VIDEO_IDS_FILE = os.path.join(VIDEO_DATA_DIR, f"{GENRE}.txt")
 
@@ -84,7 +85,11 @@ def is_english(text):
     except Exception:
         return False
 
-df_filtered = df[df["video_description"].apply(is_english) & (df["video_duration"] <= MAX_DURATION)]
+df_filtered = df[
+    df["video_description"].apply(is_english)
+    & (df["video_duration"] <= MAX_DURATION)
+    & (df["video_viewcount"] >= MINIMUM_VIEWS)
+]
 if df_filtered.empty:
     print("No matching videos found after filter.")
     raise SystemExit(0)
