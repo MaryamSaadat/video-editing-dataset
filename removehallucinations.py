@@ -193,6 +193,17 @@ def find_video(video_id: str, videos_dir: str) -> Optional[str]:
             return hits[0]
     return None
 
+def delete_video_row(df: pd.DataFrame, adf: pd.DataFrame, vid_col_main: str, vid_col_anom: str, vid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Drop the row(s) for this video id from both dataframes.
+    Returns the updated (df, adf).
+    """
+    # Drop from main df
+    df = df[df[vid_col_main].astype(str).str.strip() != vid].copy()
+    # Drop from anomalies
+    adf = adf[adf[vid_col_anom].astype(str).str.strip() != vid].copy()
+    return df, adf
+
 import subprocess
 import platform
 import tempfile
@@ -211,9 +222,11 @@ def play_video(video_path: str) -> str:
         print("Error opening video:", e)
 
     print("While the video is open, you can watch and scrub freely.")
-    resp = input("Press 'c' to skip this row, 'q' to quit, or Enter to proceed to editing prompts: ").strip().lower()
+    resp = input("Press 'c' to skip, 'd' to DELETE this row, 'q' to quit, or Enter to proceed to editing prompts: ").strip().lower()
     if resp == 'c':
         return 'skip'
+    if resp == 'd':
+        return 'delete'
     if resp == 'q':
         return 'quit'
     return 'edit'
@@ -350,6 +363,15 @@ def main():
 
     df = pd.read_csv(args.original)
     adf = pd.read_csv(args.anomalies)
+    
+    created_visited = False
+    if "visited" not in adf.columns:
+        adf["visited"] = False
+        created_visited = True
+    
+    if created_visited:
+        adf.to_csv(args.anomalies, index=False)
+        print(f"Added 'visited' to anomalies and wrote → {args.anomalies}")
 
     vid_col_main = detect_id_col(df)
     vid_col_anom = detect_id_col(adf)
@@ -357,6 +379,21 @@ def main():
         print("ERROR: Could not detect a video id column in one of the CSVs.")
         print("Looked for:", POSSIBLE_ID_COLS)
         sys.exit(1)
+
+    review_mode = input(
+        "Do you want to review visited videos? (y/n): "
+    ).strip().lower()
+
+    selected_videos = set()
+    if review_mode == "y":
+        ids_input = input(
+            "Enter video IDs to re-review (comma-separated), or press Enter for ALL visited videos: "
+        ).strip()
+        if ids_input:
+            selected_videos = {vid.strip() for vid in ids_input.split(",")}
+        else:
+            # All visited videos
+            selected_videos = set(adf.loc[adf["visited"] == True, vid_col_anom].astype(str))
 
     # Ensure missing columns exist with sane defaults (to avoid KeyErrors)
     for col in set(BOOL_FIELDS + INT_FIELDS + FLOAT_FIELDS
@@ -372,12 +409,21 @@ def main():
                 df[col] = [[] for _ in range(len(df))]
             else:
                 df[col] = ""
+                
+    atomic_write_csv(df, out_path)
+    print(f"Schema synced → {out_path}")
 
     print(f"Loaded {len(adf)} anomalies. Starting review...")
     changes = []
 
     for i, anom in adf.iterrows():
         vid = str(anom[vid_col_anom]).strip()
+        
+        if review_mode != "y" and anom["visited"]:
+            continue
+        if review_mode == "y" and selected_videos and vid not in selected_videos:
+            continue
+        
         if not vid:
             continue
 
@@ -403,6 +449,16 @@ def main():
             action = play_video(video_path)
             if action == 'skip':
                 print("Skipped row.")
+                continue
+            if action == 'delete':
+                print("Deleting this video from both files...")
+                # Remove from both dataframes
+                df, adf = delete_video_row(df, adf, vid_col_main, vid_col_anom, vid)
+                # Save both immediately (atomic for df; plain for adf)
+                atomic_write_csv(df, out_path)
+                adf.to_csv(args.anomalies, index=False)
+                print(f"Deleted and saved → {out_path} and {args.anomalies}")
+                # Continue to next anomaly without marking visited
                 continue
             if action == 'quit':
                 print("Quitting review.")
@@ -542,8 +598,17 @@ def main():
 
         # ---- Save after each row (atomic), to chosen output path ----
         atomic_write_csv(df, out_path)
-        print(f"Saved CSV → {out_path}\n")
-
+        print(f"Saved CSV after updating video {vid} → {out_path}")
+        adf.at[i, "visited"] = True
+        adf.to_csv(args.anomalies, index=False)
+        print(f"Marked visited in anomalies → {args.anomalies}")
+        
+        
+    atomic_write_csv(df, out_path)
+    adf.to_csv(args.anomalies, index=False)
+    print(f"Final CSV saved → {out_path}")
+    print(f"Final anomalies saved → {args.anomalies}")
+    
     # Append change log at the end
     if changes:
         with open(args.log, "a", encoding="utf-8") as f:
