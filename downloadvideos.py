@@ -88,7 +88,7 @@ def is_english(text):
 df_filtered = df[
     df["video_description"].apply(is_english)
     & (df["video_duration"] <= MAX_DURATION)
-    & (df["video_viewcount"] >= MINIMUM_VIEWS)
+    & (df["video_playcount"] >= MINIMUM_VIEWS)
 ]
 if df_filtered.empty:
     print("No matching videos found after filter.")
