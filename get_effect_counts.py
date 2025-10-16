@@ -2,29 +2,31 @@ import os
 import time
 import pyktok as pyk
 import pandas as pd
-from google import genai
-from langdetect import detect
 import json
 import shutil
+from langdetect import detect
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ✅ Correct SDK import
+import google.genai as genai
+
 from constants import VideoEditAnalysis
 
-client = genai.Client(api_key="AIzaSyCdjgIZZfUelDEukQELEFIk59FTMznfEgM")
+# ✅ Use env var
+API_KEY = os.environ.get("GEMINI_API_KEY")
+if not API_KEY:
+    raise RuntimeError("Set GEMINI_API_KEY in your environment before running.")
+client = genai.Client(api_key=API_KEY)
 
 
 def gemini_analysis(video_path, max_attempts=3, initial_delay=5):
-    """
-    Calls Gemini with simple retries. Retries the whole flow (upload + generate)
-    up to `max_attempts` times if an exception occurs, with exponential backoff.
-    Returns the response text on success, or None if all attempts fail.
-    """
-    attempt = 1
-    delay = initial_delay
-
+    """Upload video + call Gemini with retries. Return response text or None."""
+    attempt, delay = 1, initial_delay
     while attempt <= max_attempts:
         try:
-            video_file_name = video_path
-
-            myfile = client.files.upload(file=video_file_name)
+            myfile = client.files.upload(file=video_path)
 
             # Wait for processing
             while True:
@@ -78,10 +80,6 @@ def gemini_analysis(video_path, max_attempts=3, initial_delay=5):
                     "response_schema": VideoEditAnalysis,
                 },
             )
-
-            print("===============================================")
-            print(response.text)
-            print("===============================================")
             return response.text
 
         except Exception as e:
@@ -89,7 +87,7 @@ def gemini_analysis(video_path, max_attempts=3, initial_delay=5):
                 print(f"[Gemini error] Attempt {attempt}/{max_attempts} failed: {e}")
                 print(f"Retrying in {delay} seconds...")
                 time.sleep(delay)
-                delay = min(delay * 2, 60)  # cap backoff
+                delay = min(delay * 2, 60)
                 attempt += 1
             else:
                 print(f"[Gemini error] All {max_attempts} attempts failed: {e}")
@@ -99,17 +97,12 @@ def gemini_analysis(video_path, max_attempts=3, initial_delay=5):
 def analyze_and_save(output_dir, result_csv):
     print("Analyzing videos with Gemini...")
 
-    # Load existing CSV
     df = pd.read_csv(result_csv)
     df["video_id"] = df["video_id"].astype(str)
-    
-    # All mp4s present
-    files = [f for f in os.listdir(output_dir) if f.endswith(".mp4")]
 
-    # Helper to extract ID from filename
+    files = [f for f in os.listdir(output_dir) if f.endswith(".mp4")]
     vid_from = lambda f: f.split("_")[-1].replace(".mp4", "")
 
-    # Which ones still need analysis (present in CSV + missing/empty video_summary)
     to_analyze = []
     for f in files:
         vid = vid_from(f)
@@ -123,36 +116,24 @@ def analyze_and_save(output_dir, result_csv):
                     to_analyze.append(vid)
 
     total_to_analyze = len(to_analyze)
-    print(f"To analyze now: {total_to_analyze} video(s) "
-        f"| mp4s in folder: {len(files)} | CSV rows: {len(df)}")
+    print(f"To analyze now: {total_to_analyze} video(s) | mp4s in folder: {len(files)} | CSV rows: {len(df)}")
 
-    done = 0  # progress counter
-
+    done = 0
     for filename in files:
         if not filename.endswith(".mp4"):
             continue
-
-        # Extract video ID from filename
         video_id = filename.split("_")[-1].replace(".mp4", "")
-        
         if video_id not in to_analyze:
             continue
-        
+
         done += 1
-
-        # Skip if already analyzed
-        # if "video_summary" in df.columns and \
-        #    video_id in df["video_id"].astype(str).values and \
-        #    not pd.isna(df.loc[df["video_id"].astype(str) == video_id, "video_summary"].values[0]):
-        #     print(f"Skipping {video_id}: already analyzed.")
-        #     continue
-        
         print(f"[{done}/{total_to_analyze}] Analyzing {video_id}...")
-        # print(f"Analyzing {video_id}...")
 
-        # Run Gemini analysis (returns raw JSON string)
         file_path = os.path.join(output_dir, filename)
         raw_json = gemini_analysis(file_path)
+        if not raw_json:
+            print(f"Skipping {video_id}: no response from Gemini.")
+            continue
 
         try:
             gemini_data = json.loads(raw_json)
@@ -160,32 +141,30 @@ def analyze_and_save(output_dir, result_csv):
             print(f"Failed to parse Gemini output for {video_id}: {e}")
             continue
 
-        # Convert lists to strings for CSV
-        for key, value in gemini_data.items():
+        # Flatten list fields for CSV
+        for key, value in list(gemini_data.items()):
             if isinstance(value, list):
-                gemini_data[key] = ", ".join(map(str, value))
+                try:
+                    gemini_data[key] = ", ".join(map(str, value))
+                except Exception:
+                    gemini_data[key] = json.dumps(value, ensure_ascii=False)
 
-        # Update matching row
         if video_id in df["video_id"].astype(str).values:
             for key, value in gemini_data.items():
                 df.loc[df["video_id"].astype(str) == video_id, key] = value
             print(f"Updated analysis for video ID: {video_id}")
-
-            # SAVE after each update
             df.to_csv(result_csv, index=False)
             print(f"Saved CSV after updating {video_id}")
         else:
             print(f"Video ID {video_id} not found in CSV. Skipping.")
 
-        time.sleep(1)  # Optional delay for rate limits
+        time.sleep(1)
 
     print(f"Final CSV saved to {result_csv}")
 
 
-# Main
 if __name__ == "__main__":
-    type_of_videos = "outfit" # <--------  Change based on the genre you are analysing
+    type_of_videos = os.environ.get("VIDEO_CATEGORY").strip()
     folder = "kept_" + type_of_videos + "_videos"
-    filtered_csv_name = type_of_videos +  "_filtered.csv"
-
-    analyze_and_save(folder, filtered_csv_name)
+    result_csv = os.path.join("filtered", f"{type_of_videos}_filtered.csv")
+    analyze_and_save(folder, result_csv)
