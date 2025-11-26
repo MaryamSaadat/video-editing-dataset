@@ -63,7 +63,7 @@ def gemini_analysis(video_path):
 
     prompt = (
         "You are a professional video analyser for blind and low vision editors."
-        "Your task is to create an audio video script that provides the following:"
+        "Your task is to create an audio video script in Json only that provides the following:"
         "Different segments, each segments is a distinct shot or scene change. Small changes in motions or actions should not categorise as different segments."
         "If their are multiple shot changes in a sentence, create segment based on a complete sentence rather than based on shot changes."
         "If there are no shot or scene changes, or if the time interval between shot or scene is large, you can also create segments based on semantic differences in action or transcript."
