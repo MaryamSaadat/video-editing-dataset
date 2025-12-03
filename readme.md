@@ -191,7 +191,7 @@ python removehallucinations.py \
 
 ## Step 5 - Segment Script Extraction
 
-This script analyzes each kept video and produces **segments** (timestamped visual descriptions + transcript snippets) tailored for BLV editors. It updates your filtered CSV **in place**.
+This script (unedited_transcript_maker.py) analyzes each kept video and produces **segments** (timestamped visual descriptions + transcript snippets) tailored for BLV editors. It updates your filtered CSV **in place**.
 
 ### What it does
 
@@ -221,8 +221,8 @@ This script analyzes each kept video and produces **segments** (timestamped visu
   ```json
   {
     "segments": [
-      {"timestamp": 0, "visualDescription": "…", "transcript": "…"},
-      {"timestamp": 12, "visualDescription": "…", "transcript": "…"}
+      {"timestampStart": 0, "timestampEnd": 12, "visualDescription": "…","type": "TRANSCRIPT", "script": "…"},
+      {"timestamp": 12, "timestampEnd": 18, "visualDescription": "…", "type": "ACTIONOBJECTSCRIPT", "script": "…"}
     ]
   }
   ```

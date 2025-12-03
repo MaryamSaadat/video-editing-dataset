@@ -7,6 +7,8 @@ from typing import List
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
+from enum import Enum
+from streamlit.testing.v1.element_tree import Caption
 
 # --------------------------
 # Env + config
@@ -28,10 +30,16 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # --------------------------
 # Typed response schema
 # --------------------------
+class ScriptType(Enum):
+    TRANSCRIPT= "TRANSCRIPT"
+    ACTIONOBJECTSCRIPT= "ACTIONOBJECTSCRIPT"
+
 class Segment(BaseModel):
-    timestamp: int
+    timestampStart: int
+    timeStampEnd: int
     visualDescription: str
-    transcript: str
+    type: ScriptType
+    script: str
 
 class VideoAnalysis(BaseModel):
     segments: List[Segment]
@@ -57,12 +65,15 @@ def gemini_analysis(video_path):
         "You are a professional video analyser for blind and low vision editors."
         "Your task is to create an audio video script that provides the following:"
         "Different segments, each segments is a distinct shot or scene change. Small changes in motions or actions should not categorise as different segments."
-        "If there are no shot or scene changes, or if the time interval between shot or scene is large, you can also create segments based on the transcript if available."
+        "If their are multiple shot changes in a sentence, create segment based on a complete sentence rather than based on shot changes."
+        "If there are no shot or scene changes, or if the time interval between shot or scene is large, you can also create segments based on semantic differences in action or transcript."
         "The segments should not be too long or too short."
-        "For each segment, provide the start timestamp."
+        "For each segment, provide the start and timestamp. Each timestamp should always be in seconds. Do not provide timestamp in milliseconds"
         "For each segment, provide a visual description that allows a blind person with enough information to gauge what is going on in this segment. Ensure that the visual description is not too verbose to prevent information overload."
         "Do not include information about video editing effects such as text overlays or on screen text, animated graphics, b-rolls, sounds effects, background music in the generated visual description or transcript."
         "If the segment contains transcript, provide the transcript of that segment, do not provide transcript from music. The transcript should only include spoken audio in the video."
+        "For each segment, if the transcript is present, the transcript should be a complete sentence. "
+        "If the segment does not contain a transcript, provide an action and object based dense script of what is happening in this segment."
     )
 
     response = client.models.generate_content(
