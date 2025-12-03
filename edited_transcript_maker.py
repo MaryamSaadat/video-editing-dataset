@@ -1,28 +1,35 @@
 import os
 import time
 import json
-from pathlib import Path
-from typing import Optional
-
 import pandas as pd
+from pathlib import Path
 from dotenv import load_dotenv
+from typing import Optional
 from google import genai
 
+from backups.editsvals.constants import transitions
+
 # --------------------------
-# ENV & CONFIG
+# Env + config
 # --------------------------
 load_dotenv()
 
-GENRE = os.getenv("VIDEO_CATEGORY", "education").strip()
+GENRE = os.getenv("VIDEO_CATEGORY", "drama").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY not set. Put it in .env or export it.")
+    raise RuntimeError("GEMINI_API_KEY not set. Add it to your .env or export it in your shell.")
 
 FILTERED_CSV = Path("filtered") / f"{GENRE}_filtered.csv"
 KEEP_DIR = Path(f"kept_{GENRE}_videos")
-NEW_JSON_COL = "edited_script"
+NEW_JSON_COL = "edited_script"  # new column to store Gemini JSON
 
+# Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+# --------------------------
+# Env + config
+# --------------------------
+
 
 def extract_video_id(filename: str) -> str:
     return filename.split("_")[-1].replace(".mp4", "")
@@ -45,16 +52,16 @@ def build_effect_instruction(row: dict) -> str:
     if animated_count > 0:
         effects.append(f"- Insert exactly {animated_count} animated graphics spans using [ANIMATED] to mark start and [/ANIMATED] to mark the end. You are not required to provide information about the type of animated graphic between the spans.")
 
-    transition_count = int(row.get("transitions_count", 0))
+    transition_count = int(row.get("transition_count", 0))
     if transition_count > 0:
-        effects.append(f"- Insert exactly {transition_count} Transition spans using [TRANSITION] to mark a transition. Transition are always present at the start of a segment. You are not required to provide information about the type of transition.")
+        effects.append(f"- Insert exactly {transition_count } [TRANSITION] markers at start of the script where the transition is present.")
 
-    if str(row.get("sound_effects_present", "")).strip().upper() == "TRUE":
-        sound_effects_count = int(row.get("sound_effects_count", 0))
-        effects.append(f"- Insert exactly {sound_effects_count} sound effect span using [SOUND_EFFECT] to mark the start of a sound effect. You are not required to provide information about the type of sound effect between the spans.")
+    sound_count = int(row.get("sound_effects_count", 0))
+    if sound_count > 0:
+        effects.append(f"- Insert exactly {sound_count} [SOUND_EFFECT] ... [/SOUND_EFFECT] spans for sound effects where they are present. You are not required to provide information about the type of sound effect between the spans.")
 
     if str(row.get("background_music_present", "")).strip().upper() == "TRUE":
-        effects.append("- Background music is present. Insert [BACKGROUND_MUSIC] at the start and [/BACKGROUND_MUSIC] at the end of the full video.")
+        effects.append("- Background music is present. Insert [BACKGROUND_MUSIC] at the start of the first script.")
 
     tos_present = str(row.get("on_screen_text_present", "")).strip().upper() == "TRUE"
     tos_types = row.get("type_of_on_screen_text", [])
@@ -64,10 +71,7 @@ def build_effect_instruction(row: dict) -> str:
                 tos_types = json.loads(tos_types.replace("'", '"'))
             except:
                 tos_types = [tos_types]
-        if "Transcript" in tos_types:
-            effects.append("- The on-screen text is a transcript. Use a single [TOS] at the beginning and [/TOS] at the end of the full video.")
-        else:
-            effects.append("- Insert [TOS] ... [/TOS] spans only for meaningful on-screen text overlays (not account handles).")
+        effects.append("- Insert [TOS] to marks start and [/TOS] to mark end for meaningful on-screen text overlays (not account handles). You are not required to provide information about the content of the text on screen between the spans.")
 
     if not effects:
         return "There are no editing effects to place."
@@ -94,20 +98,21 @@ def gemini_analysis(video_path: str, segment_text: Optional[str], row: dict) -> 
     effect_instructions = build_effect_instruction(row)
 
     prompt = (
-        "You are a professional video effect analyser.\n"
-        "You will be provided with a visual description and transcript of a video.\n"
-        "Your task is to place the video effects that exists in the video in approriate places within the transcript and visual descriptions.\n"
+        "You are a professional video effect placer.\n"
+        "You will be provided with a visual description and a script of a video.\n"
+        "Your task is to place the video effects that exists in the video in appropriate places within the script.\n"
+        "The script can either be the transcript or a dense caption containing actions and objects.\n"
         "Do not invent effects. Only place markers for effects that are explicitly listed.\n\n"
         f"{effect_instructions}\n\n"
-        "Keep the original transcript and visual descriptions unmodified. Only insert markers as needed.\n"
-        "If a transcript does not exist for a segment, insert markers into the visual description.\n"
-        "Do not change the format of the segments, the effects should only be placed in the provided transcript or visual descriptions.\n\n"
-        
-        f"<SEGMENT>\n{segment_block}\n</SEGMENT>"
+        "Keep the original script and visual descriptions unmodified. Only insert markers as needed.\n"
+        "Only insert the effects in the script, do not insert the markers in the visual description\n"
+        "The effects should only be placed in one script and should not be inserted in multiple scripts.\n"
+        ""
+        f"[SEGMENT]\n{segment_block}\n[/SEGMENT]"
     )
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-pro",
         contents=[myfile, prompt],
         config={"response_mime_type": "application/json"},
     )
@@ -148,11 +153,11 @@ def analyze_and_save_with_segments(keep_dir: str, csv_path: str) -> None:
 
         video_id = extract_video_id(filename)
 
-        if NEW_JSON_COL in df.columns and \
-           video_id in df["video_id"].astype(str).values and \
-           not pd.isna(df.loc[df["video_id"].astype(str) == video_id, NEW_JSON_COL].values[0]):
-            print(f"Skipping {video_id}: already analyzed.")
-            continue
+        # if NEW_JSON_COL in df.columns and \
+        #    video_id in df["video_id"].astype(str).values and \
+        #    not pd.isna(df.loc[df["video_id"].astype(str) == video_id, NEW_JSON_COL].values[0]):
+        #     print(f"Skipping {video_id}: already analyzed.")
+        #     continue
 
         file_path = os.path.join(keep_dir, filename)
         print(f"\n=== Processing {filename} (video_id={video_id}) ===")
@@ -165,7 +170,8 @@ def analyze_and_save_with_segments(keep_dir: str, csv_path: str) -> None:
             result_json = gemini_analysis(file_path, segment_text, row_data)
         except Exception as e:
             print(f"[Gemini] Error analyzing {filename}: {e}")
-            result_json = {"error": str(e)}
+            print(f"Skipping this video and moving to the next one.")
+            continue
 
         compact = json.dumps(result_json, ensure_ascii=False, separators=(",", ":"))
         if row_mask.any():
