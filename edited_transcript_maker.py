@@ -153,11 +153,11 @@ def analyze_and_save_with_segments(keep_dir: str, csv_path: str) -> None:
 
         video_id = extract_video_id(filename)
 
-        # if NEW_JSON_COL in df.columns and \
-        #    video_id in df["video_id"].astype(str).values and \
-        #    not pd.isna(df.loc[df["video_id"].astype(str) == video_id, NEW_JSON_COL].values[0]):
-        #     print(f"Skipping {video_id}: already analyzed.")
-        #     continue
+        if NEW_JSON_COL in df.columns and \
+           video_id in df["video_id"].astype(str).values and \
+           not pd.isna(df.loc[df["video_id"].astype(str) == video_id, NEW_JSON_COL].values[0]):
+            print(f"Skipping {video_id}: already analyzed.")
+            continue
 
         file_path = os.path.join(keep_dir, filename)
         print(f"\n=== Processing {filename} (video_id={video_id}) ===")
