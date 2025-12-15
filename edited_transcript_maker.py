@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from typing import Optional
 from google import genai
 
-from backups.editsvals.constants import transitions
+# from backups.editsvals.constants import transitions
 
 # --------------------------
 # Env + config
@@ -112,7 +112,7 @@ def gemini_analysis(video_path: str, segment_text: Optional[str], row: dict) -> 
     )
 
     response = client.models.generate_content(
-        model="gemini-2.5-pro",
+        model="gemini-2.5-flash",
         contents=[myfile, prompt],
         config={"response_mime_type": "application/json"},
     )
@@ -147,43 +147,46 @@ def analyze_and_save_with_segments(keep_dir: str, csv_path: str) -> None:
     if NEW_JSON_COL not in df.columns:
         df[NEW_JSON_COL] = pd.NA
 
-    for filename in os.listdir(keep_dir):
-        if not filename.lower().endswith(".mp4"):
+    for idx, row in df.iterrows():
+        video_id = str(row["video_id"]).strip()
+
+        # Skip already processed rows
+        if not pd.isna(row.get(NEW_JSON_COL, None)):
+            print(f"Skipping video_id={video_id}: already analyzed.")
             continue
 
-        video_id = extract_video_id(filename)
+        # Find matching video file: "@tiktok_video_<id>.mp4"
+        matched_file = None
+        for fname in os.listdir(keep_dir):
+            if fname.endswith(f"{video_id}.mp4"):
+                matched_file = fname
+                break
 
-        if NEW_JSON_COL in df.columns and \
-           video_id in df["video_id"].astype(str).values and \
-           not pd.isna(df.loc[df["video_id"].astype(str) == video_id, NEW_JSON_COL].values[0]):
-            print(f"Skipping {video_id}: already analyzed.")
+        if matched_file is None:
+            print(f"⚠ No video found for video_id={video_id}. Skipping.")
             continue
 
-        file_path = os.path.join(keep_dir, filename)
-        print(f"\n=== Processing {filename} (video_id={video_id}) ===")
+        video_path = os.path.join(keep_dir, matched_file)
+        segment_text = row["segments"]
 
-        row_mask = df["video_id"].astype(str) == str(video_id)
-        segment_text = get_segment_for_video(df, video_id)
-        row_data = df.loc[row_mask].iloc[0].to_dict() if row_mask.any() else {}
+        print(f"\n=== Processing video_id={video_id} -> {matched_file} ===")
 
         try:
-            result_json = gemini_analysis(file_path, segment_text, row_data)
+            result_json = gemini_analysis(video_path, segment_text, row.to_dict())
         except Exception as e:
-            print(f"[Gemini] Error analyzing {filename}: {e}")
-            print(f"Skipping this video and moving to the next one.")
+            print(f"[Gemini] Error analyzing video_id={video_id}: {e}")
             continue
 
-        compact = json.dumps(result_json, ensure_ascii=False, separators=(",", ":"))
-        if row_mask.any():
-            df.loc[row_mask, NEW_JSON_COL] = compact
-        else:
-            new_row = {"video_id": str(video_id), "segments": segment_text or "", NEW_JSON_COL: compact}
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        # Save result into CSV row
+        df.at[idx, NEW_JSON_COL] = json.dumps(
+            result_json, ensure_ascii=False, separators=(",", ":")
+        )
 
-        df.to_csv(csv_path, index=False)
+        df.to_csv(csv_path, index=False)  # Save after each processed video
         time.sleep(1)
 
     print(f"\nDone. Updated CSV saved to {csv_path}")
+
 
 if __name__ == "__main__":
     analyze_and_save_with_segments(KEEP_DIR, FILTERED_CSV)
